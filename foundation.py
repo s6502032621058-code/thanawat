@@ -1,63 +1,141 @@
+# app.py
+# โปรแกรมออกแบบฐานรากเยื้องศูนย์ (Eccentric Footing)
+# ตามทฤษฎี Terzaghi Bearing Capacity Theory
+# ใช้งานด้วย Streamlit
+
+import streamlit as st
 import math
 
-def structural_design_footing():
-    print("--- โปรแกรมออกแบบฐานรากแผ่คอขวด (SDM Standard) ---")
-    
-    # 1. รับค่าตัวแปรการออกแบบ (Input)
-    dl = float(input("น้ำหนักบรรทุกคงที่ (Dead Load) (kg): "))
-    ll = float(input("น้ำหนักบรรทุกจร (Live Load) (kg): "))
-    q_all = float(input("ความสามารถการรับน้ำหนักดิน (Allowable Bearing) (kg/m²): "))
-    fc_prime = float(input("กำลังอัดของคอนกรีต f'c (ksc): "))
-    fy = float(input("กำลังรับแรงดึงเหล็กเสริม fy (ksc): "))
-    col_size = float(input("ขนาดเสาตอม่อด้านเท่า (m): "))
-    
-    # 2. คำนวณขนาดฐานราก (Service Load)
-    p_service = (dl + ll) * 1.10  # รวมน้ำหนักฐานรากประมาณ 10%
-    area_req = p_service / q_all
-    width = math.ceil(math.sqrt(area_req) * 10) / 10
-    area_actual = width ** 2
-    
-    # 3. คำนวณแรงดันดินประลัย (Factored Load)
-    p_u = (1.4 * dl) + (1.7 * ll)
-    q_u = p_u / area_actual
-    
-    # 4. สมมติความหนาฐานราก (t) และระยะลึกประสิทธิผล (d)
-    t = 0.50 # เริ่มต้นที่ 50 ซม.
-    covering = 0.075 # ระยะหุ้ม 7.5 ซม.
-    d = t - covering - 0.012 # หัก covering และครึ่งหนึ่งของเหล็ก 12-25mm
-    
-    # 5. ตรวจสอบแรงเฉือนทะลุ (Punching Shear)
-    # เส้นรอบรูปวิกฤตที่ d/2 จากขอบเสา
-    b0 = 4 * (col_size + d)
-    v_u_punch = q_u * (area_actual - (col_size + d)**2)
-    phi_v = 0.85
-    v_c_punch = phi_v * 1.06 * math.sqrt(fc_prime) * (b0 * 100) * (d * 100)
-    
-    # 6. คำนวณเหล็กเสริม (Flexure Reinforcement)
-    # ระยะจากขอบเสาถึงขอบฐานราก (Moment Arm)
-    x = (width - col_size) / 2
-    m_u = (q_u * width * (x**2)) / 2
-    
-    # หาปริมาณเหล็กเสริม (Simplified formula)
-    phi_m = 0.90
-    rn = m_u / (phi_m * width * (d**2) * 10) # 10 คือตัวแปรแปลงหน่วย ksc
-    rho = (0.85 * fc_prime / fy) * (1 - math.sqrt(1 - (2 * rn / (0.85 * fc_prime))))
-    as_required = max(rho, 0.0018) * (width * 100) * (d * 100) # ตรวจสอบเหล็กเสริมขั้นต่ำ
+st.set_page_config(page_title="Eccentric Footing - Terzaghi", layout="centered")
 
-    # แสดงผล
-    print("\n" + "="*30)
-    print(f"ขนาดฐานราก: {width:.2f} x {width:.2f} เมตร")
-    print(f"ความหนาที่ใช้: {t:.2f} เมตร (d = {d:.2f} ม.)")
-    print(f"แรงเฉือนทะลุ (Vu): {v_u_punch:,.2f} kg")
-    print(f"กำลังรับแรงเฉือนคอนกรีต (Phi Vc): {v_c_punch:,.2f} kg")
-    
-    if v_c_punch > v_u_punch:
-        print(">> ผลการตรวจสอบแรงเฉือน: ผ่าน")
+st.title("โปรแกรมคำนวณฐานรากเยื้องศูนย์")
+st.subheader("ตามทฤษฎี Terzaghi Bearing Capacity Theory")
+
+st.markdown("---")
+
+# =========================
+# รับค่าจากผู้ใช้
+# =========================
+
+P = st.number_input("แรงกดรวม P (kN)", value=1500.0)
+Mx = st.number_input("โมเมนต์รอบแกน X, Mx (kN-m)", value=120.0)
+My = st.number_input("โมเมนต์รอบแกน Y, My (kN-m)", value=80.0)
+
+B = st.number_input("ความกว้างฐานราก B (m)", value=2.5)
+L = st.number_input("ความยาวฐานราก L (m)", value=3.0)
+Df = st.number_input("ความลึกฐานราก Df (m)", value=1.5)
+
+gamma = st.number_input("หน่วยน้ำหนักดิน γ (kN/m³)", value=18.0)
+c = st.number_input("Cohesion, c (kPa)", value=25.0)
+phi = st.number_input("มุมเสียดทานภายใน φ (degree)", value=30.0)
+
+FS_required = st.number_input("Factor of Safety ที่ต้องการ", value=3.0)
+
+st.markdown("---")
+
+
+# =========================
+# ฟังก์ชันคำนวณ
+# =========================
+
+def terzaghi_bearing_capacity(P, Mx, My, B, L, Df, gamma, c, phi):
+    # Eccentricity
+    ex = Mx / P
+    ey = My / P
+
+    # Effective dimensions
+    B_eff = B - 2 * ex
+    L_eff = L - 2 * ey
+
+    if B_eff <= 0 or L_eff <= 0:
+        return None
+
+    A_eff = B_eff * L_eff
+
+    # Bearing capacity factors
+    phi_rad = math.radians(phi)
+
+    if phi == 0:
+        Nc = 5.7
+        Nq = 1.0
+        Ngamma = 0.0
     else:
-        print(">> ผลการตรวจสอบแรงเฉือน: ไม่ผ่าน (ต้องเพิ่มความหนาฐานราก)")
-        
-    print(f"ปริมาณเหล็กเสริมที่ต้องการ: {as_required:.2f} ตร.ซม.")
-    print("="*30)
+        Nq = math.exp(math.pi * math.tan(phi_rad)) * (
+            math.tan(math.radians(45 + phi / 2))
+        ) ** 2
 
-if __name__ == "__main__":
-    structural_design_footing()
+        Nc = (Nq - 1) / math.tan(phi_rad)
+        Ngamma = 2 * (Nq + 1) * math.tan(phi_rad)
+
+    # surcharge
+    q = gamma * Df
+
+    # Ultimate Bearing Capacity
+    qult = (c * Nc) + (q * Nq) + (0.5 * gamma * B_eff * Ngamma)
+
+    # Applied pressure
+    q_applied = P / A_eff
+
+    # Safety Factor
+    FS = qult / q_applied
+
+    return {
+        "ex": ex,
+        "ey": ey,
+        "B_eff": B_eff,
+        "L_eff": L_eff,
+        "A_eff": A_eff,
+        "Nc": Nc,
+        "Nq": Nq,
+        "Ngamma": Ngamma,
+        "qult": qult,
+        "q_applied": q_applied,
+        "FS": FS
+    }
+
+
+# =========================
+# ปุ่มคำนวณ
+# =========================
+
+if st.button("คำนวณ"):
+
+    result = terzaghi_bearing_capacity(
+        P, Mx, My, B, L, Df, gamma, c, phi
+    )
+
+    if result is None:
+        st.error("Effective Dimension <= 0 กรุณาตรวจสอบค่าที่ป้อน")
+    else:
+        st.success("คำนวณสำเร็จ")
+
+        st.markdown("## ผลการคำนวณ")
+
+        st.write(f"### Eccentricity")
+        st.write(f"ex = {result['ex']:.3f} m")
+        st.write(f"ey = {result['ey']:.3f} m")
+
+        if result["ex"] > B / 6 or result["ey"] > L / 6:
+            st.warning("แรงตกนอก Kern ของฐานราก อาจเกิดแรงดึงใต้ฐาน")
+
+        st.write(f"### Effective Dimensions")
+        st.write(f"B' = {result['B_eff']:.3f} m")
+        st.write(f"L' = {result['L_eff']:.3f} m")
+        st.write(f"A' = {result['A_eff']:.3f} m²")
+
+        st.write(f"### Bearing Capacity Factors")
+        st.write(f"Nc = {result['Nc']:.3f}")
+        st.write(f"Nq = {result['Nq']:.3f}")
+        st.write(f"Nγ = {result['Ngamma']:.3f}")
+
+        st.write(f"### Bearing Capacity")
+        st.write(f"Ultimate Bearing Capacity = {result['qult']:.3f} kPa")
+        st.write(f"Applied Bearing Pressure = {result['q_applied']:.3f} kPa")
+
+        st.write(f"### Safety Check")
+        st.write(f"Factor of Safety (FS) = {result['FS']:.3f}")
+
+        if result["FS"] >= FS_required:
+            st.success("ผลการออกแบบ: ปลอดภัย")
+        else:
+            st.error("ผลการออกแบบ: ไม่ปลอดภัย")
